@@ -67,7 +67,12 @@ function test-succeeds {
 }
 
 function test-fail {
-	if [ ! -z "$@" ]; then echo "!!! FAIL $*" >/dev/stderr; fi
+	local line_number="${BASH_LINENO[0]}"
+	if [ ! -z "$@" ]; then
+		echo "!!! FAIL at line $line_number: $*" >/dev/stderr
+	else
+		echo "!!! FAIL at line $line_number" >/dev/stderr
+	fi
 	TEST_LOG+=("×")
 	TEST_ERRORS+=("F")
 }
