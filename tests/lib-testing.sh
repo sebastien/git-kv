@@ -69,7 +69,7 @@ function test-succeeds {
 function test-fail {
 	local line_number="${BASH_LINENO[0]}"
 	local file_path="${BASH_SOURCE[1]}"
-	local relative_path=$(realpath --relative-to="$PWD" "$file_path")
+	local relative_path=$(realpath --relative-to="$ORIGINAL_PATH" "$file_path")
 	if [ ! -z "$@" ]; then
 		echo "!!! FAIL at $relative_path:$line_number: $*" >/dev/stderr
 	else
