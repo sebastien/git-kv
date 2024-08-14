@@ -26,7 +26,7 @@ GIT_KV_DEFAULT_ORIGIN="origin"
 # -----------------------------------------------------------------------------
 
 function git-kvlib-get-commit-hash() {
-	local commit="${1:-$GIT_KV_DEFAULT_COMMIT}"gg
+	local commit="${1:-$GIT_KV_DEFAULT_COMMIT}"
 	git rev-parse --verify "$commit" 2>/dev/null || echo "$commit"
 
 }
