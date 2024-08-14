@@ -67,17 +67,19 @@ function test-succeeds {
 }
 
 function test-fail {
-	local i=0
+	local i
 	local line_number
 	local file_path
 	local relative_path
-	# NOTE: This crashed and makes the function exist, not sure why.
-	# while [[ "${BASH_SOURCE[i]}" == *"lib-testing.sh" ]]; do
-	# 	echo "X${BASH_SOURCE[i]}"
-	# 	((i++))
-	# done
-	line_number="${BASH_LINENO[$((i-1))]}"
-	file_path="${BASH_SOURCE[$i]}"
+
+	for ((i=${#BASH_SOURCE[@]}-1; i>=0; i--)); do
+		if [[ "${BASH_SOURCE[i]}" != *"lib-testing.sh" ]]; then
+			line_number="${BASH_LINENO[$i]}"
+			file_path="${BASH_SOURCE[$i]}"
+			break
+		fi
+	done
+
 	relative_path=$(realpath --relative-to="$ORIGINAL_PATH" "$file_path")
 
 	if [ ! -z "$@" ]; then
