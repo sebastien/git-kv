@@ -29,7 +29,13 @@ and common CLI tooks. Also not that:
 To install using `curl` and `make`, run:
 
 ```bash
-curl -s https://raw.githubusercontent.com/sebastien/git-kv/master/Makefile | make -f /dev/stdin install
+curl -s https://raw.githubusercontent.com/sebastien/git-kv/main/Makefile | make -f /dev/stdin install
+```
+
+You can also copy directly the script to where you want
+
+```bash
+curl -s -o git-kv https://raw.githubusercontent.com/sebastien/git-kv/main/git-kv && chmod +x git-kv
 ```
 
 ## Usage
