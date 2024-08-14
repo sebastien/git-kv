@@ -1,0 +1,2 @@
+appenv_prepend PATH $APPENV_DIR/bin
+appenv_prepend PATH $APPENV_DIR/tests
