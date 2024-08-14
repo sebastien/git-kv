@@ -30,11 +30,14 @@ function test-start {
 function test-diff {
 	local a=$(mktemp "$TEST_PATH"/var.XXX)
 	local b=$(mktemp "$TEST_PATH"/var.XXX)
+	echo "Retrieved: '$1'"
+	echo "Expected:  '$2'"
+	echo ">>>"
 	echo "$1" > "$a"
 	echo "$2" > "$b"
-	echo "--- Expected/Retrieved"
+	echo "--- Retrieved/Expected"
 	diff "$a" "$b"
-	echo "---"
+	echo "<<<"
 	unlink "$a"
 	unlink "$b"
 }
@@ -73,14 +76,14 @@ function test-fail {
 	local relative_path
 
 	for ((i=${#BASH_SOURCE[@]}-1; i>=0; i--)); do
-		if [[ "${BASH_SOURCE[i]}" != *"lib-testing.sh" ]]; then
+		echo "--> ${BASH_SOURCE[$i]}:${BASH_LINENO[$i]}"
+ 		if [[ "${BASH_SOURCE[i]}" != *"lib-testing.sh" ]]; then
 			line_number="${BASH_LINENO[$i]}"
 			file_path="${BASH_SOURCE[$i]}"
-			break
 		fi
 	done
 
-	relative_path=$(realpath --relative-to="$ORIGINAL_PATH" "$file_path")
+	relative_path="$file_path"
 
 	if [ ! -z "$@" ]; then
 		echo "!!! FAIL at $relative_path:$line_number: $*" >/dev/stderr

@@ -115,7 +115,11 @@ function git-kv-delete() {
 	notes=$(echo "$notes" | grep -v "^$key:" || true)
 	
 	# Add the deletion entry
-	notes="${notes}${key}:"$'\n'
+	if [ -z "$notes" ]; then
+		notes="$(printf "${key}:")"
+	else
+		notes="$(printf "${notes}"'\n'"${key}:")"
+	fi
 	
 	git-kvlib-set-notes "$commit_hash" "$notes"
 }

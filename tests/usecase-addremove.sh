@@ -28,6 +28,6 @@ test-expect "$(git-kv show)" "$(printf 'test-key:test-value-overriden\nother-key
 # Test deletion
 git-kv delete test-key
 test-expect "_$(git-kv get test-key)" "_"
-test-expect "$(git-kv show)" "$(printf 'other-key:other-key-value')"
+test-expect "$(git-kv show)" "$(printf 'other-key:other-key-value\ntest-key:')"
 
 # EOF
