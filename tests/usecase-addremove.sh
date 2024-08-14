@@ -22,10 +22,20 @@ test-expect $(git-kv get test-key) test-value-overriden
 git-kv set other-key other-key-value
 # test-expect $(git-kv get other-key) other-key-value
 
-echo "POUET"
-git-kv show
+# Test git-kv show
+show_output=$(git-kv show)
+expected_output="test-key:test-value-overriden
+other-key:other-key-value"
+test-expect "$show_output" "$expected_output"
 
-# git-kv delete test-key 
-# test-expect $(git-kv get test-key) ""
+# Test deletion
+git-kv delete test-key
+test-expect "$(git-kv get test-key)" ""
+
+# Verify show output after deletion
+show_output_after_delete=$(git-kv show)
+expected_output_after_delete="other-key:other-key-value
+test-key:"
+test-expect "$show_output_after_delete" "$expected_output_after_delete"
 
 # EOF
