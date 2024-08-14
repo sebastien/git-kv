@@ -1,4 +1,15 @@
-## Git Kv: A Key-Value Store for Your Git Repository
+```
+          _ __     __
+   ____ _(_) /_   / /___   __
+  / __ `/ / __/  / //_/ | / /
+ / /_/ / / /_   / ,<  | |/ /
+ \__, /_/\__/  /_/|_| |___/
+/____/
+
+```
+
+## Git-KV
+###  A Key-Value Store for Your Git Repository
 
 `git-kv` is a Bash script that adds a simple key-value store on top of your Git
 repository. It uses Git notes to store and manage key-value pairs associated
@@ -29,13 +40,13 @@ and common CLI tooks. Also not that:
 To install using `curl` and `make`, run:
 
 ```bash
-curl -s https://raw.githubusercontent.com/sebastien/git-kv/main/Makefile | make -f /dev/stdin install
+curl https://raw.githubusercontent.com/sebastien/git-kv/main/Makefile | make -f /dev/stdin install && echo OK
 ```
 
 You can also copy directly the script to where you want
 
 ```bash
-curl -s -o git-kv https://raw.githubusercontent.com/sebastien/git-kv/main/git-kv && chmod +x git-kv
+curl -o git-kv https://raw.githubusercontent.com/sebastien/git-kv/main/git-kv && chmod +x git-kv && echo OK
 ```
 
 ## Usage
