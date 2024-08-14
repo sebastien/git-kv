@@ -1,0 +1,221 @@
+#!/usr/bin/env bash
+# --
+# # Git Kv
+
+set -euo pipefail
+
+NOTES_REF="refs/notes/kvdb"
+DEFAULT_COMMIT="HEAD"
+DEFAULT_ORIGIN="origin"
+
+# -----------------------------------------------------------------------------
+# 
+# LIBRARY FUNCTIONS
+# 
+# -----------------------------------------------------------------------------
+
+function git-kvlib-get-commit-hash() {
+	local commit="${1:-$DEFAULT_COMMIT}"
+	git rev-parse --verify "$commit" 2>/dev/null || echo "$commit"
+
+}
+
+function git-kvlib-get-notes() {
+	local commit="$1"
+	git notes --ref="$NOTES_REF" show "$commit" 2>/dev/null || true
+}
+
+function git-kvlib-set-notes() {
+	local commit="$1"
+	local content="$2"
+	echo -n "$content" | git notes --ref="$NOTES_REF" add -f -F - "$commit"
+}
+
+function git-kvlib-get-all-ancestors() {
+	local commit="$1"
+	git rev-list "$commit"
+}
+
+function git-kvlib-format-output() {
+	local format="$1"
+	local data="$2"
+	if [ "$format" = "json" ]; then
+		echo "$data" | awk -F':' '
+			BEGIN { printf "{" }
+			NF > 1 { 
+				if (NR > 1) printf ",";
+				key = $1;
+				value = substr($0, index($0, ":") + 1);
+				gsub(/"/, "\\\"", key);
+				gsub(/"/, "\\\"", value);
+				printf "\"%s\":\"%s\"", key, value;
+			}
+			END { printf "}" }
+		'
+	else
+		echo "$data"
+	fi
+}
+
+# -----------------------------------------------------------------------------
+# 
+# SUBCOMMANDS
+# 
+# -----------------------------------------------------------------------------
+
+function git-kv-show() {
+	local format="text"
+	local commit="$DEFAULT_COMMIT"
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+			-tjson) format="json"; shift ;;
+			*) commit="$1"; shift ;;
+		esac
+	done
+
+	local commit_hash=$(git-kvlib-get-commit-hash "$commit")
+	local result=""
+
+	for ancestor in $(git rev-list "$commit_hash"); do
+		local notes=$(git-kvlib-get-notes "$ancestor")
+		while IFS= read -r line; do
+			local key="${line%%:*}"
+			local value="${line#*:}"
+			result=$(echo "$result" | grep -v "^$key:" || true)
+			[ -n "$value" ] && result+="$line"$'\n'
+		done <<< "$notes"
+	done
+
+	git-kvlib-format-output "$format" "$result"
+}
+
+function git-kv-delete() {
+
+	local key="$1"
+	local commit="${2:-$DEFAULT_COMMIT}"
+	local commit_hash=$(git-kvlib-get-commit-hash "$commit")
+	local notes=$(git-kvlib-get-notes "$commit_hash")
+	
+	# Remove any existing entry for this key
+	notes=$(echo "$notes" | grep -v "^$key:" || true)
+	
+	# Add the deletion entry
+	notes="${notes}${key}:"$'\n'
+	
+	git-kvlib-set-notes "$commit_hash" "$notes"
+}
+
+function git-kv-set() {
+	local key="$1"
+	local value="$2"
+	local commit="${3:-$DEFAULT_COMMIT}"
+	local commit_hash=$(git-kvlib-get-commit-hash "$commit")
+	local notes=$(git-kvlib-get-notes "$commit_hash")
+	
+	# Remove any existing entry for this key
+	notes=$(echo "$notes" | grep -v "^$key:" || true)
+	
+	# Add the new key-value pair
+	notes="${notes}${key}:${value}"$'\n'
+	
+	git-kvlib-set-notes "$commit_hash" "$notes"
+}
+
+function git-kv-get() {
+	local key="$1"
+	local commit="${2:-$DEFAULT_COMMIT}"
+	git-kv-show "$commit" | grep "^$key:" | tail -n1 | cut -d':' -f2-
+}
+
+function git-kv-get-all() {
+	local key="$1"
+	local commit="${2:-$DEFAULT_COMMIT}"
+	local commit_hash=$(git-kvlib-get-commit-hash "$commit")
+	
+	for ancestor in $(git-kvlib-get-all-ancestors "$commit_hash" | tac); do
+		git-kvlib-get-notes "$ancestor" | grep "^$key:" | cut -d':' -f2-
+	done
+}
+
+function git-kv-list() {
+	local keyish="$1"
+	local commit="${2:-$DEFAULT_COMMIT}"
+	git-kv-show "$commit" | grep "^$keyish" | cut -d':' -f1
+}
+
+function git-kv-list-all() {
+	local keyish="$1"
+	local commit="${2:-$DEFAULT_COMMIT}"
+	local commit_hash=$(git-kvlib-get-commit-hash "$commit")
+	
+	for ancestor in $(git-kvlib-get-all-ancestors "$commit_hash" | tac); do
+		git-kvlib-get-notes "$ancestor" | grep "^$keyish" | cut -d':' -f1
+	done | sort -u
+}
+
+function git-kv-push() {
+	local origin="${1:-$DEFAULT_ORIGIN}"
+	git push "$origin" "refs/notes/*"
+}
+
+function git-kv-pull() {
+	local origin="${1:-$DEFAULT_ORIGIN}"
+	git fetch "$origin" "refs/notes/*:refs/notes/*"
+}
+
+
+function git-kv-help() {
+   cat << EOF
+Usage: git kv <subcommand> [options]
+
+Available subcommands:
+  show [COMMIT]              Show key-value pairs for the given commit
+  del|delete KEY [COMMIT]    Delete a key for the given commit
+  set KEY VALUE [COMMIT]     Set a key-value pair for the given commit
+  get KEY [COMMIT]           Get the latest value for a key
+  get-all KEY [COMMIT]       Get all values for a key since the given commit
+  list KEYISH [COMMIT]       List all keys matching KEYISH for the given commit
+  list-all KEYISH [COMMIT]   List all keys matching KEYISH, including deleted
+  push [ORIGIN]              Push key-value data to the given origin
+  pull [ORIGIN]              Pull key-value data from the given origin
+
+Options:
+  -tjson                     Output in JSON format (for applicable commands)
+
+COMMIT defaults to the currently checked-out commit if not specified.
+ORIGIN defaults to the default
+EOF
+}
+
+# -----------------------------------------------------------------------------
+# 
+# MAIN
+# 
+# -----------------------------------------------------------------------------
+
+function git-kv-main() {
+	local subcommand="${1:-}"
+	if [ "_$subcommand" == "_" ]; then
+		git-kv-help
+		return 0
+	fi
+	shift
+	case "$subcommand" in
+		show) git-kv-show "$@" ;;
+		del|delete) git-kv-delete "$@" ;;
+		set) git-kv-set "$@" ;;
+		get) git-kv-get "$@" ;;
+		get-all) git-kv-get-all "$@" ;;
+		list) git-kv-list "$@" ;;
+		list-all) git-kv-list-all "$@" ;;
+		push) git-kv-push "$@" ;;
+		pull) git-kv-pull "$@" ;;
+		*) echo "Unknown subcommand: $subcommand" >&2; exit 1 ;;
+	esac
+}
+
+# Entry point
+git-kv-main "$@"
+
+# EOF
