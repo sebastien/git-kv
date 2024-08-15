@@ -18,6 +18,15 @@ set -euo pipefail
 GIT_KV_NOTES_REF="refs/notes/kv"
 GIT_KV_DEFAULT_COMMIT="HEAD"
 GIT_KV_DEFAULT_ORIGIN="origin"
+GIT_OPTIONS=()
+if [ -n "${GIT_AUTHOR_NAME:-}" ]; then
+	GIT_OPTIONS+=("-c")
+	GIT_OPTIONS+=("user.name=$GIT_AUTHOR_NAME")
+fi
+if [ -n "${GIT_AUTHOR_EMAIL:-}" ]; then
+	GIT_OPTIONS+=("-c")
+	GIT_OPTIONS+=("user.email=$GIT_AUTHOR_EMAIL")
+fi
 
 # -----------------------------------------------------------------------------
 # 
@@ -39,7 +48,7 @@ function git-kvlib-get-notes() {
 function git-kvlib-set-notes() {
 	local commit="$1"
 	local content="$2"
-	echo -n "$content" | git notes --ref="$GIT_KV_NOTES_REF" add -f -F - "$commit"
+	echo -n "$content" | git ${GIT_OPTIONS[@]} notes --ref="$GIT_KV_NOTES_REF" add -f -F - "$commit"
 }
 
 function git-kvlib-get-all-ancestors() {
