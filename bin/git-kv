@@ -15,9 +15,25 @@
 
 set -euo pipefail
 
-GIT_KV_NOTES_REF="refs/notes/kv"
+GIT_KV_NOTES_REF="kv"
 GIT_KV_DEFAULT_COMMIT="HEAD"
 GIT_KV_DEFAULT_ORIGIN="origin"
+GIT_OPTIONS=()
+if [ -n "${GIT_AUTHOR_NAME:-}" ]; then
+	GIT_OPTIONS+=("-c")
+	GIT_OPTIONS+=("user.name=$GIT_AUTHOR_NAME")
+fi
+if [ -n "${GIT_AUTHOR_EMAIL:-}" ]; then
+	GIT_OPTIONS+=("-c")
+	GIT_OPTIONS+=("user.email=$GIT_AUTHOR_EMAIL")
+fi
+# It may happen that HOME is not defined, like in CI environments.
+if [ -z "${HOME:-}" ] && [ ${#GIT_OPTIONS[@]} -eq 0 ]; then
+	GIT_OPTIONS+=("-c")
+	GIT_OPTIONS+=("user.name=git-kv")
+	GIT_OPTIONS+=("-c")
+	GIT_OPTIONS+=("user.email=git-kv@tools.internal")
+fi
 
 # -----------------------------------------------------------------------------
 # 
@@ -26,7 +42,7 @@ GIT_KV_DEFAULT_ORIGIN="origin"
 # -----------------------------------------------------------------------------
 
 function git-kvlib-get-commit-hash() {
-	local commit="${1:-$GIT_KV_DEFAULT_COMMIT}"gg
+	local commit="${1:-$GIT_KV_DEFAULT_COMMIT}"
 	git rev-parse --verify "$commit" 2>/dev/null || echo "$commit"
 
 }
@@ -42,9 +58,12 @@ function git-kvlib-set-notes() {
 	echo -n "$content" | git notes --ref="$GIT_KV_NOTES_REF" add -f -F - "$commit"
 }
 
-function git-kvlib-get-all-ancestors() {
-	local commit="$1"
-	git rev-list "$commit"
+function git-kvlib-raw-notes {
+	GIT_NOTES_REF=refs/notes/$GIT_KV_NOTES_REF git log --pretty=format:"__HASH__ %h %aI %n%N" 
+}
+
+function git-kvlib-dump-notes {
+	git-kvlib-raw-notes |  grep -v '^__HASH__ \|^$'
 }
 
 function git-kvlib-format-output() {
@@ -74,9 +93,10 @@ function git-kvlib-format-output() {
 # 
 # -----------------------------------------------------------------------------
 
+
 function git-kv-show() {
 	local format="text"
-	local commit="$GIT_KV_DEFAULT_COMMIT"
+	local commit="${1:-$GIT_KV_DEFAULT_COMMIT}"
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -85,21 +105,17 @@ function git-kv-show() {
 		esac
 	done
 
-	local commit_hash=$(git-kvlib-get-commit-hash "$commit")
 	local lines=()
 	local keys=()
-	for ancestor in $(git rev-list "$commit_hash"); do
-		local notes=$(git-kvlib-get-notes "$ancestor")
-		while IFS= read -r line; do
-			local key="${line%%:*}"
-			local value="${line#*:}"
-			# NOTE: associative arrays would be better there
-			if [ " ${keys[*]} " != *" $key "* ]; then
-				lines+=("$line")
-				keys+=("$key")
-			fi
-		done <<< "$notes"
-	done
+	while read -r line; do
+		local key="${line%%:*}"
+		local value="${line#*:}"
+		# NOTE: associative arrays would be better there
+		if [ " ${keys[*]} " != *" $key "* ]; then
+			lines+=("$line")
+			keys+=("$key")
+		fi
+	done < <(git-kvlib-dump-notes "$commit")
 	result="$(printf '%s\n' "${lines[@]}")"
 	git-kvlib-format-output "$format" "$result"
 }
@@ -115,7 +131,11 @@ function git-kv-delete() {
 	notes=$(echo "$notes" | grep -v "^$key:" || true)
 	
 	# Add the deletion entry
-	notes="${notes}${key}:"$'\n'
+	if [ -z "$notes" ]; then
+		notes="$(printf "${key}:")"
+	else
+		notes="$(printf "${notes}"'\n'"${key}:")"
+	fi
 	
 	git-kvlib-set-notes "$commit_hash" "$notes"
 }
@@ -140,35 +160,47 @@ function git-kv-set() {
 }
 
 function git-kv-get() {
-	local key="$1"
+	local keyish="${1:-.*}"
 	local commit="${2:-$GIT_KV_DEFAULT_COMMIT}"
-	git-kv-show "$commit" | grep "^$key:" | tail -n1 | cut -d':' -f2-
+	# TODO: Optimise with a while loop and we break?
+	git-kv-show "$commit" | grep "^$keyish:" | tail -n1 | cut -d':' -f2-
 }
 
 function git-kv-get-all() {
-	local key="$1"
+	local keyish="${1:-.*}"
 	local commit="${2:-$GIT_KV_DEFAULT_COMMIT}"
 	local commit_hash=$(git-kvlib-get-commit-hash "$commit")
-	
-	for ancestor in $(git-kvlib-get-all-ancestors "$commit_hash" | tac); do
-		git-kvlib-get-notes "$ancestor" | grep "^$key:" | cut -d':' -f2-
-	done
+	git-kvlib-dump-notes "$commit_hash" | grep "^$keyish:" | cut -d':' -f2-
+}
+
+function git-kv-def() {
+	local keyish="${1:-.*}"
+	local commit="${2:-$GIT_KV_DEFAULT_COMMIT}"
+	local info=""
+	local key=""
+	while read -r line; do
+		if [[ "$line" == "__HASH__ "* ]]; then
+			info=$(echo -n "$line" | cut -d' ' -f2-3)
+		else
+			key=$(echo "$line" | grep "^$keyish" | cut -d: -f1 || true)
+			if [ -n "$key" ]; then
+				echo  "$key $info"
+			fi
+		fi
+	done < <(git-kvlib-raw-notes "$commit")
 }
 
 function git-kv-list() {
-	local keyish="$1"
+	local keyish="${1:-.*}"
 	local commit="${2:-$GIT_KV_DEFAULT_COMMIT}"
-	git-kv-show "$commit" | grep "^$keyish" | cut -d':' -f1
+	git-kv-show "$commit" | grep "^$keyish" | cut -d':' -f1 | sort | uniq
 }
 
 function git-kv-list-all() {
-	local keyish="$1"
+	local keyish="${1:-.*}"
 	local commit="${2:-$GIT_KV_DEFAULT_COMMIT}"
 	local commit_hash=$(git-kvlib-get-commit-hash "$commit")
-	
-	for ancestor in $(git-kvlib-get-all-ancestors "$commit_hash" | tac); do
-		git-kvlib-get-notes "$ancestor" | grep "^$keyish" | cut -d':' -f1
-	done | sort -u
+	git-kvlib-dump-notes "$commit_hash" | grep "^$keyish:" | cut -d':' -f1 | sort | uniq
 }
 
 function git-kv-push() {
@@ -194,6 +226,7 @@ Available subcommands:
   del|delete KEY [COMMIT]    Delete a key for the given commit
   set KEY VALUE [COMMIT]     Set a key-value pair for the given commit
   get KEY [COMMIT]           Get the latest value for a key
+  def KEY [COMMIT]           Tells the commits that define the key
   get-all KEY [COMMIT]       Get all values for a key since the given commit
   list KEYISH [COMMIT]       List all keys matching KEYISH for the given commit
   list-all KEYISH [COMMIT]   List all keys matching KEYISH, including deleted
@@ -227,6 +260,7 @@ function git-kv-main() {
 		set) git-kv-set "$@" ;;
 		get) git-kv-get "$@" ;;
 		get-all) git-kv-get-all "$@" ;;
+		def) git-kv-def "$@" ;;
 		list) git-kv-list "$@" ;;
 		list-all) git-kv-list-all "$@" ;;
 		push) git-kv-push "$@" ;;
