@@ -13,6 +13,14 @@ install:
 		chmod +x "$$TARGET"
 	fi
 
+install-link:
+	@mkdir -p "$(HOME)/.local/bin"
+	TARGET="$(HOME)/.local/bin/git-kv"
+	if [ -e "$$TARGET" ]; then
+		unlink "$$TARGET"
+	fi
+	ln -sfr bin/git-kv "$$TARGET"
+
 print-%:
 	@$(info $*=$($*))
 

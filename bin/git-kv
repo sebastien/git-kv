@@ -55,11 +55,11 @@ function git-kvlib-get-notes() {
 function git-kvlib-set-notes() {
 	local commit="$1"
 	local content="$2"
-	echo -n "$content" | git notes --ref="$GIT_KV_NOTES_REF" add -f -F - "$commit"
+	echo -n "$content" | git "${GIT_OPTIONS[@]}" notes --ref="$GIT_KV_NOTES_REF" add -f -F - "$commit"
 }
 
 function git-kvlib-raw-notes {
-	GIT_NOTES_REF=refs/notes/$GIT_KV_NOTES_REF git log --pretty=format:"__HASH__ %h %aI %n%N" 
+	GIT_NOTES_REF=refs/notes/$GIT_KV_NOTES_REF git  log --pretty=format:"__HASH__ %h %aI %n%N" 
 }
 
 function git-kvlib-dump-notes {
@@ -130,6 +130,7 @@ function git-kv-delete() {
 	# Remove any existing entry for this key
 	notes=$(echo "$notes" | grep -v "^$key:" || true)
 	
+	# TODO: We may want to instead remove the note.
 	# Add the deletion entry
 	if [ -z "$notes" ]; then
 		notes="$(printf "${key}:")"
