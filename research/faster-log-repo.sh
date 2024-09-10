@@ -4,7 +4,7 @@ if [ ! -e "$REPO" ]; then mkdir -p "$REPO"; fi
 if [ ! -e "$REPO/.git" ]; then git -C "$REPO" init; fi
 
 function git-make-file {
-	echo "$2" > "$REPO/$1"
+	echo "$2" >"$REPO/$1"
 	git -C "$REPO" add $1
 	git -C "$REPO" commit $1 -m "Changed: $1"
 }

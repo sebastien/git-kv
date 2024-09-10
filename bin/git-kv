@@ -101,7 +101,12 @@ function git-kv-show() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 			-tjson) format="json"; shift ;;
+			-traw)
+				git-kvlib-raw-notes "$commit"
+				return 0
+				;;
 			*) commit="$1"; shift ;;
+
 		esac
 	done
 
@@ -111,10 +116,13 @@ function git-kv-show() {
 		local key="${line%%:*}"
 		local value="${line#*:}"
 		# NOTE: associative arrays would be better there
-		if [ " ${keys[*]} " != *" $key "* ]; then
-			lines+=("$line")
-			keys+=("$key")
-		fi
+		case "${keys[*]}" in
+			*"[$key]"*);;
+			*)
+				lines+=("$line"o)
+				keys+=("[$key]")
+				;;
+		esac
 	done < <(git-kvlib-dump-notes "$commit")
 	result="$(printf '%s\n' "${lines[@]}")"
 	git-kvlib-format-output "$format" "$result"

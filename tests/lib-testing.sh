@@ -30,8 +30,8 @@ function test-start {
 function test-diff {
 	local a=$(mktemp "$TEST_PATH"/var.XXX)
 	local b=$(mktemp "$TEST_PATH"/var.XXX)
-	echo "$1" > "$a"
-	echo "$2" > "$b"
+	echo "$1" >"$a"
+	echo "$2" >"$b"
 	echo "--- Expected/Retrieved"
 	diff "$a" "$b"
 	echo "---"
@@ -44,7 +44,7 @@ function test-expect {
 		test-fail "Output differ"
 		test-diff "$1" "$2"
 	else
-		test-succeeds 
+		test-succeeds
 	fi
 }
 function test-error {

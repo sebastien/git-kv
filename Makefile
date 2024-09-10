@@ -1,9 +1,16 @@
 
+SOURCES_BASH=$(wildcard *.sh bin/*sh src/sh/*sh tests/*.sh research/*.sh)
 USER?=$(shell whoami)
 HOME?=/home/$(USER)
 
 test:
 	@bash tests/harness.sh
+
+lint:
+	@shellcheck $(SOURCES_BASH)
+
+fmt:
+	@shfmt -w $(SOURCES_BASH)
 
 install:
 	@mkdir -p "$(HOME)/.local/bin"
