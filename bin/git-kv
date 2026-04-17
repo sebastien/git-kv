@@ -41,43 +41,52 @@ fi
 # 
 # -----------------------------------------------------------------------------
 
-function git-kvlib-get-commit-hash() {
+function git_kvlib_get_commit_hash() {
 	local commit="${1:-$GIT_KV_DEFAULT_COMMIT}"
 	git rev-parse --verify "$commit" 2>/dev/null || echo "$commit"
 
 }
 
-function git-kvlib-get-notes() {
+function git_kvlib_get_notes() {
 	local commit="$1"
 	git notes --ref="$GIT_KV_NOTES_REF" show "$commit" 2>/dev/null || true
 }
 
-function git-kvlib-set-notes() {
+function git_kvlib_set_notes() {
 	local commit="$1"
 	local content="$2"
 	echo -n "$content" | git "${GIT_OPTIONS[@]}" notes --ref="$GIT_KV_NOTES_REF" add -f -F - "$commit"
 }
 
-function git-kvlib-raw-notes {
-	GIT_NOTES_REF=refs/notes/$GIT_KV_NOTES_REF git  log --pretty=format:"__HASH__ %h %aI %n%N" 
+function git_kvlib_raw_notes {
+	local commit="${1:-$GIT_KV_DEFAULT_COMMIT}"
+	GIT_NOTES_REF=refs/notes/$GIT_KV_NOTES_REF git log "$commit" --pretty=format:"__HASH__ %h %aI %n%N"
 }
 
-function git-kvlib-dump-notes {
-	git-kvlib-raw-notes |  grep -v '^__HASH__ \|^$'
+function git_kvlib_dump_notes {
+	local commit="${1:-$GIT_KV_DEFAULT_COMMIT}"
+	git_kvlib_raw_notes "$commit" | grep -v '^__HASH__ \|^$'
 }
 
-function git-kvlib-format-output() {
+function git_kvlib_format_output() {
 	local format="$1"
 	local data="$2"
 	if [ "$format" = "json" ]; then
 		echo "$data" | awk -F':' '
-			BEGIN { printf "{" }
+			BEGIN { printf "{"; first = 1 }
 			NF > 1 { 
-				if (NR > 1) printf ",";
+				if (!first) printf ",";
+				first = 0;
 				key = $1;
 				value = substr($0, index($0, ":") + 1);
+				gsub(/\\/, "\\\\", key);
+				gsub(/\\/, "\\\\", value);
 				gsub(/"/, "\\\"", key);
 				gsub(/"/, "\\\"", value);
+				gsub(/\t/, "\\t", key);
+				gsub(/\t/, "\\t", value);
+				gsub(/\r/, "\\r", key);
+				gsub(/\r/, "\\r", value);
 				printf "\"%s\":\"%s\"", key, value;
 			}
 			END { printf "}" }
@@ -94,21 +103,27 @@ function git-kvlib-format-output() {
 # -----------------------------------------------------------------------------
 
 
-function git-kv-show() {
+function git_kv_show() {
 	local format="text"
-	local commit="${1:-$GIT_KV_DEFAULT_COMMIT}"
+	local commit="$GIT_KV_DEFAULT_COMMIT"
+	local show_raw="false"
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 			-tjson) format="json"; shift ;;
 			-traw)
-				git-kvlib-raw-notes "$commit"
-				return 0
+				show_raw="true"
+				shift
 				;;
 			*) commit="$1"; shift ;;
 
 		esac
 	done
+
+	if [ "$show_raw" = "true" ]; then
+		git_kvlib_raw_notes "$commit"
+		return 0
+	fi
 
 	local lines=()
 	local keys=()
@@ -123,66 +138,96 @@ function git-kv-show() {
 				keys+=("[$key]")
 				;;
 		esac
-	done < <(git-kvlib-dump-notes "$commit")
+	done < <(git_kvlib_dump_notes "$commit")
+	local result
 	result="$(printf '%s\n' "${lines[@]}")"
-	git-kvlib-format-output "$format" "$result"
+	git_kvlib_format_output "$format" "$result"
 }
 
-function git-kv-delete() {
+function git_kv_delete() {
+	if [ "$#" -lt 1 ]; then
+		echo "Usage: git kv delete KEY [COMMIT]" >&2
+		return 1
+	fi
 
 	local key="$1"
 	local commit="${2:-$GIT_KV_DEFAULT_COMMIT}"
-	local commit_hash=$(git-kvlib-get-commit-hash "$commit")
-	local notes=$(git-kvlib-get-notes "$commit_hash")
+	local commit_hash
+	commit_hash=$(git_kvlib_get_commit_hash "$commit")
+	local notes
+	notes=$(git_kvlib_get_notes "$commit_hash")
 	
 	# Remove any existing entry for this key
-	notes=$(echo "$notes" | grep -v "^$key:" || true)
+	notes=$(printf '%s\n' "$notes" | awk -F':' -v key="$key" '$1 != key' || true)
 	
 	# TODO: We may want to instead remove the note.
 	# Add the deletion entry
 	if [ -z "$notes" ]; then
-		notes="$(printf "${key}:")"
+		notes="$(printf '%s:' "$key")"
 	else
-		notes="$(printf "${notes}"'\n'"${key}:")"
+		notes="$(printf '%s\n%s:' "$notes" "$key")"
 	fi
 	
-	git-kvlib-set-notes "$commit_hash" "$notes"
+	git_kvlib_set_notes "$commit_hash" "$notes"
 }
 
-function git-kv-set() {
+function git_kv_set() {
+	if [ "$#" -lt 2 ]; then
+		echo "Usage: git kv set KEY VALUE [COMMIT]" >&2
+		return 1
+	fi
+
 	local key="$1"
 	local value="$2"
 	local commit="${3:-$GIT_KV_DEFAULT_COMMIT}"
-	local commit_hash=$(git-kvlib-get-commit-hash "$commit")
-	local notes=$(git-kvlib-get-notes "$commit_hash")
+	local commit_hash
+	commit_hash=$(git_kvlib_get_commit_hash "$commit")
+	local notes
+	notes=$(git_kvlib_get_notes "$commit_hash")
 	
 	# Remove any existing entry for this key
-	notes=$(echo "$notes" | grep -v "^$key:" || true)
+	notes=$(printf '%s\n' "$notes" | awk -F':' -v key="$key" '$1 != key' || true)
 	
 	# Add the new key-value pair
 	if [ -z "$notes" ]; then
-		notes="$(printf "${key}:${value}")"
+		notes="$(printf '%s:%s' "$key" "$value")"
 	else
-		notes="$(printf "${notes}"'\n'"${key}:${value}")"
+		notes="$(printf '%s\n%s:%s' "$notes" "$key" "$value")"
 	fi
-	git-kvlib-set-notes "$commit_hash" "$notes"
+	git_kvlib_set_notes "$commit_hash" "$notes"
 }
 
-function git-kv-get() {
+function git_kv_get() {
+	if [ "$#" -lt 1 ]; then
+		echo "Usage: git kv get KEY [COMMIT]" >&2
+		return 1
+	fi
+
 	local keyish="${1:-.*}"
 	local commit="${2:-$GIT_KV_DEFAULT_COMMIT}"
 	# TODO: Optimise with a while loop and we break?
-	git-kv-show "$commit" | grep "^$keyish:" | tail -n1 | cut -d':' -f2-
+	git_kv_show "$commit" | grep "^$keyish:" | cut -d':' -f2-
 }
 
-function git-kv-get-all() {
+function git_kv_get_all() {
+	if [ "$#" -lt 1 ]; then
+		echo "Usage: git kv get-all KEY [COMMIT]" >&2
+		return 1
+	fi
+
 	local keyish="${1:-.*}"
 	local commit="${2:-$GIT_KV_DEFAULT_COMMIT}"
-	local commit_hash=$(git-kvlib-get-commit-hash "$commit")
-	git-kvlib-dump-notes "$commit_hash" | grep "^$keyish:" | cut -d':' -f2-
+	local commit_hash
+	commit_hash=$(git_kvlib_get_commit_hash "$commit")
+	git_kvlib_dump_notes "$commit_hash" | grep "^$keyish:" | cut -d':' -f2-
 }
 
-function git-kv-def() {
+function git_kv_def() {
+	if [ "$#" -lt 1 ]; then
+		echo "Usage: git kv def KEY [COMMIT]" >&2
+		return 1
+	fi
+
 	local keyish="${1:-.*}"
 	local commit="${2:-$GIT_KV_DEFAULT_COMMIT}"
 	local info=""
@@ -196,34 +241,35 @@ function git-kv-def() {
 				echo  "$key $info"
 			fi
 		fi
-	done < <(git-kvlib-raw-notes "$commit")
+	done < <(git_kvlib_raw_notes "$commit")
 }
 
-function git-kv-list() {
+function git_kv_list() {
 	local keyish="${1:-.*}"
 	local commit="${2:-$GIT_KV_DEFAULT_COMMIT}"
-	git-kv-show "$commit" | grep "^$keyish" | cut -d':' -f1 | sort | uniq
+	git_kv_show "$commit" | grep "^$keyish" | cut -d':' -f1 | sort | uniq
 }
 
-function git-kv-list-all() {
+function git_kv_list_all() {
 	local keyish="${1:-.*}"
 	local commit="${2:-$GIT_KV_DEFAULT_COMMIT}"
-	local commit_hash=$(git-kvlib-get-commit-hash "$commit")
-	git-kvlib-dump-notes "$commit_hash" | grep "^$keyish:" | cut -d':' -f1 | sort | uniq
+	local commit_hash
+	commit_hash=$(git_kvlib_get_commit_hash "$commit")
+	git_kvlib_dump_notes "$commit_hash" | grep "^$keyish:" | cut -d':' -f1 | sort | uniq
 }
 
-function git-kv-push() {
+function git_kv_push() {
 	local origin="${1:-$GIT_KV_DEFAULT_ORIGIN}"
-	git push "$origin" "refs/notes/*"
+	git push "$origin" "refs/notes/$GIT_KV_NOTES_REF"
 }
 
-function git-kv-pull() {
+function git_kv_pull() {
 	local origin="${1:-$GIT_KV_DEFAULT_ORIGIN}"
-	git fetch "$origin" "refs/notes/*:refs/notes/*"
+	git fetch "$origin" "refs/notes/$GIT_KV_NOTES_REF:refs/notes/$GIT_KV_NOTES_REF"
 }
 
 
-function git-kv-help() {
+function git_kv_help() {
    cat << EOF
 Usage: git kv <subcommand> [options]
 
@@ -246,7 +292,7 @@ Options:
   -tjson                     Output in JSON format (for applicable commands)
 
 COMMIT defaults to the currently checked-out commit if not specified.
-ORIGIN defaults to the default
+ORIGIN defaults to origin.
 EOF
 }
 
@@ -256,30 +302,30 @@ EOF
 # 
 # -----------------------------------------------------------------------------
 
-function git-kv-main() {
+function git_kv_main() {
 	local subcommand="${1:-}"
 	if [ "_$subcommand" == "_" ]; then
-		git-kv-help
+		git_kv_help
 		return 0
 	fi
 	shift
 	case "$subcommand" in
-		show) git-kv-show "$@" ;;
-		del|delete) git-kv-delete "$@" ;;
-		set) git-kv-set "$@" ;;
-		get) git-kv-get "$@" ;;
-		get-all) git-kv-get-all "$@" ;;
-		def) git-kv-def "$@" ;;
-		list) git-kv-list "$@" ;;
-		list-all) git-kv-list-all "$@" ;;
-		push) git-kv-push "$@" ;;
-		pull) git-kv-pull "$@" ;;
-		h|help) git-kv-help ;;
+		show) git_kv_show "$@" ;;
+		del|delete) git_kv_delete "$@" ;;
+		set) git_kv_set "$@" ;;
+		get) git_kv_get "$@" ;;
+		get-all) git_kv_get_all "$@" ;;
+		def) git_kv_def "$@" ;;
+		list) git_kv_list "$@" ;;
+		list-all) git_kv_list_all "$@" ;;
+		push) git_kv_push "$@" ;;
+		pull) git_kv_pull "$@" ;;
+		h|help) git_kv_help ;;
 		*) echo "Unknown subcommand: $subcommand" >&2; exit 1 ;;
 	esac
 }
 
 # Entry point
-git-kv-main "$@"
+git_kv_main "$@"
 
 # EOF

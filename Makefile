@@ -7,18 +7,14 @@ test:
 	@bash tests/harness.sh
 
 lint:
-	@shellcheck $(SOURCES_BASH)
+	@shellcheck -x $(SOURCES_BASH)
 
 fmt:
 	@shfmt -w $(SOURCES_BASH)
 
 install:
 	@mkdir -p "$(HOME)/.local/bin"
-	TARGET="$(HOME)/.local/bin/git-kv"
-	if [ -e "$$TARGET" ]; then
-		curl -o "$$TARGET" 'https://raw.githubusercontent.com/sebastien/git-kv/master/bin/git-kv'
-		chmod +x "$$TARGET"
-	fi
+	install -m 0755 "bin/git-kv" "$(HOME)/.local/bin/git-kv"
 
 install-link:
 	@mkdir -p "$(HOME)/.local/bin"
