@@ -18,6 +18,28 @@ set -euo pipefail
 GIT_KV_NOTES_REF="kv"
 GIT_KV_DEFAULT_COMMIT="HEAD"
 GIT_KV_DEFAULT_ORIGIN="origin"
+GIT_KV_VERSION=""
+
+function git_kvlib_get_version() {
+	if [ -n "$GIT_KV_VERSION" ]; then
+		printf '%s\n' "$GIT_KV_VERSION"
+		return 0
+	fi
+
+	local script_dir
+	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	if GIT_KV_VERSION="$(git -C "$script_dir/.." describe --tags --always --dirty 2>/dev/null)"; then
+		printf '%s\n' "$GIT_KV_VERSION"
+		return 0
+	fi
+
+	printf '%s\n' "dev"
+}
+
+function git_kv_version() {
+	printf 'git-kv %s\n' "$(git_kvlib_get_version)"
+}
+
 GIT_OPTIONS=()
 if [ -n "${GIT_AUTHOR_NAME:-}" ]; then
 	GIT_OPTIONS+=("-c")
@@ -43,8 +65,35 @@ fi
 
 function git_kvlib_get_commit_hash() {
 	local commit="${1:-$GIT_KV_DEFAULT_COMMIT}"
-	git rev-parse --verify "$commit" 2>/dev/null || echo "$commit"
+	local mode="${2:-write}"
+	local commit_hash
+	if commit_hash="$(git rev-parse --verify --quiet "$commit^{commit}")"; then
+		echo "$commit_hash"
+		return 0
+	fi
 
+	if [ "$mode" = "read" ] && [ "$commit" = "$GIT_KV_DEFAULT_COMMIT" ]; then
+		return 2
+	fi
+
+	git rev-parse --verify "$commit^{commit}"
+}
+
+function git_kvlib_get_commit_hash_read() {
+	local commit="${1:-$GIT_KV_DEFAULT_COMMIT}"
+	local commit_hash
+	local resolve_status=0
+	if commit_hash="$(git_kvlib_get_commit_hash "$commit" read)"; then
+		echo "$commit_hash"
+		return 0
+	else
+		resolve_status=$?
+	fi
+	if [ "$resolve_status" -eq 2 ]; then
+		return 0
+	fi
+
+	return "$resolve_status"
 }
 
 function git_kvlib_get_notes() {
@@ -60,12 +109,24 @@ function git_kvlib_set_notes() {
 
 function git_kvlib_raw_notes {
 	local commit="${1:-$GIT_KV_DEFAULT_COMMIT}"
-	GIT_NOTES_REF=refs/notes/$GIT_KV_NOTES_REF git log "$commit" --pretty=format:"__HASH__ %h %aI %n%N"
+	local commit_hash
+	commit_hash="$(git_kvlib_get_commit_hash_read "$commit")" || return $?
+	if [ -z "$commit_hash" ]; then
+		return 0
+	fi
+
+	GIT_NOTES_REF=refs/notes/$GIT_KV_NOTES_REF git log "$commit_hash" --pretty=format:"__HASH__ %h %aI %n%N"
 }
 
 function git_kvlib_dump_notes {
 	local commit="${1:-$GIT_KV_DEFAULT_COMMIT}"
 	git_kvlib_raw_notes "$commit" | grep -v '^__HASH__ \|^$'
+}
+
+function git_kvlib_key_matches() {
+	local key="$1"
+	local keyish="${2:-*}"
+	[[ "$key" == $keyish ]]
 }
 
 function git_kvlib_format_output() {
@@ -172,8 +233,21 @@ function git_kv_delete() {
 }
 
 function git_kv_set() {
+	local force="false"
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+			-f|--force) force="true"; shift ;;
+			--) shift; break ;;
+			-*)
+				echo "Usage: git kv set [-f|--force] KEY VALUE [COMMIT]" >&2
+				return 1
+				;;
+			*) break ;;
+		esac
+	done
+
 	if [ "$#" -lt 2 ]; then
-		echo "Usage: git kv set KEY VALUE [COMMIT]" >&2
+		echo "Usage: git kv set [-f|--force] KEY VALUE [COMMIT]" >&2
 		return 1
 	fi
 
@@ -182,6 +256,17 @@ function git_kv_set() {
 	local commit="${3:-$GIT_KV_DEFAULT_COMMIT}"
 	local commit_hash
 	commit_hash=$(git_kvlib_get_commit_hash "$commit")
+
+	if [ "$force" != "true" ]; then
+		local current_value
+		current_value="$(
+			git_kv_show "$commit_hash" | awk -F':' -v key="$key" '$1 == key {print substr($0, index($0, ":") + 1); exit}'
+		)"
+		if [ -n "$current_value" ] && [ "$current_value" = "$value" ]; then
+			return 0
+		fi
+	fi
+
 	local notes
 	notes=$(git_kvlib_get_notes "$commit_hash")
 	
@@ -203,10 +288,21 @@ function git_kv_get() {
 		return 1
 	fi
 
-	local keyish="${1:-.*}"
+	local keyish="${1:-*}"
 	local commit="${2:-$GIT_KV_DEFAULT_COMMIT}"
-	# TODO: Optimise with a while loop and we break?
-	git_kv_show "$commit" | grep "^$keyish:" | cut -d':' -f2-
+	local commit_hash
+	commit_hash="$(git_kvlib_get_commit_hash_read "$commit")" || return $?
+	if [ -z "$commit_hash" ]; then
+		return 0
+	fi
+
+	while read -r line; do
+		local key="${line%%:*}"
+		local value="${line#*:}"
+		if git_kvlib_key_matches "$key" "$keyish"; then
+			printf '%s\n' "$value"
+		fi
+	done < <(git_kv_show "$commit_hash")
 }
 
 function git_kv_get_all() {
@@ -215,11 +311,21 @@ function git_kv_get_all() {
 		return 1
 	fi
 
-	local keyish="${1:-.*}"
+	local keyish="${1:-*}"
 	local commit="${2:-$GIT_KV_DEFAULT_COMMIT}"
 	local commit_hash
-	commit_hash=$(git_kvlib_get_commit_hash "$commit")
-	git_kvlib_dump_notes "$commit_hash" | grep "^$keyish:" | cut -d':' -f2-
+	commit_hash="$(git_kvlib_get_commit_hash_read "$commit")" || return $?
+	if [ -z "$commit_hash" ]; then
+		return 0
+	fi
+
+	while read -r line; do
+		local key="${line%%:*}"
+		local value="${line#*:}"
+		if git_kvlib_key_matches "$key" "$keyish"; then
+			printf '%s\n' "$value"
+		fi
+	done < <(git_kvlib_dump_notes "$commit_hash")
 }
 
 function git_kv_def() {
@@ -228,16 +334,21 @@ function git_kv_def() {
 		return 1
 	fi
 
-	local keyish="${1:-.*}"
+	local keyish="${1:-*}"
 	local commit="${2:-$GIT_KV_DEFAULT_COMMIT}"
 	local info=""
 	local key=""
+	local commit_hash
+	commit_hash="$(git_kvlib_get_commit_hash_read "$commit")" || return $?
+	if [ -z "$commit_hash" ]; then
+		return 0
+	fi
 	while read -r line; do
 		if [[ "$line" == "__HASH__ "* ]]; then
 			info=$(echo -n "$line" | cut -d' ' -f2-3)
 		else
-			key=$(echo "$line" | grep "^$keyish" | cut -d: -f1 || true)
-			if [ -n "$key" ]; then
+			key="${line%%:*}"
+			if git_kvlib_key_matches "$key" "$keyish"; then
 				echo  "$key $info"
 			fi
 		fi
@@ -245,17 +356,56 @@ function git_kv_def() {
 }
 
 function git_kv_list() {
-	local keyish="${1:-.*}"
+	local keyish="${1:-*}"
 	local commit="${2:-$GIT_KV_DEFAULT_COMMIT}"
-	git_kv_show "$commit" | grep "^$keyish" | cut -d':' -f1 | sort | uniq
+	local commit_hash
+	commit_hash="$(git_kvlib_get_commit_hash_read "$commit")" || return $?
+	if [ -z "$commit_hash" ]; then
+		return 0
+	fi
+
+	while read -r line; do
+		local key="${line%%:*}"
+		local value="${line#*:}"
+		if [ -n "$value" ] && git_kvlib_key_matches "$key" "$keyish"; then
+			printf '%s\n' "$key"
+		fi
+	done < <(git_kv_show "$commit_hash") | sort | uniq || true
 }
 
 function git_kv_list_all() {
-	local keyish="${1:-.*}"
+	local keyish="${1:-*}"
 	local commit="${2:-$GIT_KV_DEFAULT_COMMIT}"
 	local commit_hash
-	commit_hash=$(git_kvlib_get_commit_hash "$commit")
-	git_kvlib_dump_notes "$commit_hash" | grep "^$keyish:" | cut -d':' -f1 | sort | uniq
+	commit_hash="$(git_kvlib_get_commit_hash_read "$commit")" || return $?
+	if [ -z "$commit_hash" ]; then
+		return 0
+	fi
+
+	while read -r line; do
+		local key="${line%%:*}"
+		if git_kvlib_key_matches "$key" "$keyish"; then
+			printf '%s\n' "$key"
+		fi
+	done < <(git_kvlib_dump_notes "$commit_hash") | sort | uniq || true
+}
+
+function git_kv_items() {
+	local keyish="${1:-*}"
+	local commit="${2:-$GIT_KV_DEFAULT_COMMIT}"
+	local commit_hash
+	commit_hash="$(git_kvlib_get_commit_hash_read "$commit")" || return $?
+	if [ -z "$commit_hash" ]; then
+		return 0
+	fi
+
+	while read -r line; do
+		local key="${line%%:*}"
+		local value="${line#*:}"
+		if [ -n "$value" ] && git_kvlib_key_matches "$key" "$keyish"; then
+			printf '%s=%s\n' "$key" "$value"
+		fi
+	done < <(git_kv_show "$commit_hash")
 }
 
 function git_kv_push() {
@@ -270,7 +420,7 @@ function git_kv_pull() {
 
 
 function git_kv_help() {
-   cat << EOF
+	cat << EOF
 Usage: git kv <subcommand> [options]
 
 git-kv is a key/value store that allows you to attach and retrieve
@@ -279,16 +429,21 @@ key/value data alongside your commits.
 Available subcommands:
   show [COMMIT]              Show key-value pairs for the given commit
   del|delete KEY [COMMIT]    Delete a key for the given commit
-  set KEY VALUE [COMMIT]     Set a key-value pair for the given commit
-  get KEY [COMMIT]           Get the latest value for a key
-  def KEY [COMMIT]           Tells the commits that define the key
-  get-all KEY [COMMIT]       Get all values for a key since the given commit
-  list KEYISH [COMMIT]       List all keys matching KEYISH for the given commit
-  list-all KEYISH [COMMIT]   List all keys matching KEYISH, including deleted
+  set [-f|--force] KEY VALUE [COMMIT]
+                              Set a key-value pair for the given commit
+  get KEY [COMMIT]           Get the latest value for a glob-matching key
+  def KEY [COMMIT]           Show the commits that define glob-matching keys
+  get-all KEY [COMMIT]       Get all values for a glob-matching key
+  list KEYISH [COMMIT]       List keys matching the KEYISH glob for the given commit
+  list-all KEYISH [COMMIT]   List keys matching the KEYISH glob, including deleted
+  items [KEYISH] [COMMIT]    Output matching key=value pairs, one per line
   push [ORIGIN]              Push key-value data to the given origin
   pull [ORIGIN]              Pull key-value data from the given origin
+  help                        Show this help text
 
 Options:
+  -h, --help                 Show this help text
+  -v, --version              Show version information
   -tjson                     Output in JSON format (for applicable commands)
 
 COMMIT defaults to the currently checked-out commit if not specified.
@@ -310,6 +465,8 @@ function git_kv_main() {
 	fi
 	shift
 	case "$subcommand" in
+		-h|--help) git_kv_help ;;
+		-v|--version) git_kv_version ;;
 		show) git_kv_show "$@" ;;
 		del|delete) git_kv_delete "$@" ;;
 		set) git_kv_set "$@" ;;
@@ -318,6 +475,7 @@ function git_kv_main() {
 		def) git_kv_def "$@" ;;
 		list) git_kv_list "$@" ;;
 		list-all) git_kv_list_all "$@" ;;
+		items) git_kv_items "$@" ;;
 		push) git_kv_push "$@" ;;
 		pull) git_kv_pull "$@" ;;
 		h|help) git_kv_help ;;

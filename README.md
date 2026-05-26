@@ -32,6 +32,7 @@ Notes:
 - Data is stored in `git notes` under `refs/notes/kv` (see `.git/refs/notes`).
 - Notes are fetched separately from regular Git refs; use `git kv pull` to sync key-value data.
 - Deletions are represented as tombstones (`key:` with an empty value) and are also tracked in notes history.
+- `get` and `list` hide tombstones; use `list-all` or `show` to inspect deletion history.
 
 ## Prerequisites
 
@@ -79,6 +80,9 @@ git kv pull
 git kv <subcommand> [options]
 ```
 
+Run `git kv help` or `git kv --help` to list all subcommands.
+Run `git kv --version` to print the current version string.
+
 Defaults:
 - `COMMIT` defaults to `HEAD`.
 - `ORIGIN` defaults to `origin`.
@@ -108,12 +112,14 @@ git kv delete KEY [COMMIT]
 Set a key-value pair for a commit.
 
 ```sh
-git kv set KEY VALUE [COMMIT]
+git kv set [-f|--force] KEY VALUE [COMMIT]
 ```
+
+By default, `set` is a no-op when the key already has the same value. Use `-f` or `--force` to rewrite the note anyway.
 
 ### `get`
 
-Get the latest value for keys matching `KEY` (pattern matched via `grep`).
+Get the latest value for keys matching `KEY` using shell glob matching.
 
 ```sh
 git kv get KEY [COMMIT]
@@ -151,6 +157,14 @@ List all keys matching `KEYISH`, including deleted keys.
 git kv list-all KEYISH [COMMIT]
 ```
 
+### `items`
+
+Output matching key/value pairs, one per line.
+
+```sh
+git kv items [KEYISH] [COMMIT]
+```
+
 ### `push`
 
 Push key-value notes to a remote.
@@ -169,5 +183,6 @@ git kv pull [ORIGIN]
 
 ## Pattern Matching Notes
 
-- `KEY` and `KEYISH` arguments are treated as patterns (regular expressions) in `get`, `get-all`, `list`, `list-all`, and `def`.
-- If you need exact matching, use a strict pattern such as `^my.key$`.
+- `KEY` and `KEYISH` arguments are treated as shell globs in `get`, `get-all`, `list`, `list-all`, `items`, and `def`.
+- Quote patterns like `'*storage*'` so your shell does not expand them before `git kv` sees them.
+- If you need an exact match, pass the literal key without glob metacharacters.
